@@ -4,14 +4,12 @@ Transform: AWS::Serverless-2016-10-31
 Metadata:
   AWS::ServerlessRepo::Application:
     Name: lambda-logs-athena-example
-    Description: This serverless application... TODO
+    Description: This serverless application is an example of using existing SAR apps to aggregate JSON-formatted Lambda logs in S3 for Athena querying.
     Author: James Hood
-    # SPDX License Id, e.g., MIT, MIT-0, Apache-2.0. See https://spdx.org/licenses for more details
-    SpdxLicenseId: TODO
-    # paths are relative to .aws-sam/build directory
+    SpdxLicenseId: MIT
     LicenseUrl: ../../LICENSE
     ReadmeUrl: ../../README.md
-    Labels: [serverless]
+    Labels: [lambda, logs, athena]
     HomePageUrl: https://github.com/jlhood/lambda-logs-athena-example
     # Update the semantic version and run sam publish to publish a new version of your app
     SemanticVersion: 0.0.1
@@ -25,32 +23,75 @@ Parameters:
     Default: INFO
 
 Resources:
-  MyFunction:
+  LogPipeline:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:us-east-1:277187709615:applications/kinesis-data-firehose-to-s3
+        SemanticVersion: 1.0.0
+      Parameters: 
+        # Buffer incoming data for the specified period of time, in seconds, before delivering it to the destination. See https://docs.aws.amazon.com/firehose/latest/APIReference/API_BufferingHints.html for details.
+        BufferingIntervalInSeconds: '60'
+        # Buffer incoming data to the specified size, in MBs, before delivering it to the destination. Note, if you specify a DataTransformationLambdaFunctionArn, you should not set this higher than 6. See https://docs.aws.amazon.com/firehose/latest/dev/data-transformation.html for details.
+        # BufferingSizeInMBs: 5 # Uncomment to override default value
+        # Compression format for S3 files
+        CompressionFormat: GZIP
+        # ARN of data transformation Lambda function. This optional parameter allows you to configure a Lambda function to be invoked by Kinesis Firehose to transformation incoming events before they are saved to S3. For example, you could use this to remove sensitive data to meet compliance regulations.
+        # DataTransformationLambdaFunctionArn: ''
+        # Set to true to enable server-side encryption on the S3 bucket using the default aws/s3 AWS KMS master key.
+        # EnableBucketEncryption: false # Uncomment to override default value
+        # By default, the app creates an S3 bucket to store the logs. However, if this value is populated with a bucket ARN, that bucket will be used instead. Use this if you have an existing S3 bucket or need to control more advanced configuration settings on your bucket.
+        # ExistingS3BucketArn: ''
+        # Prefix used for S3 files
+        KeyPrefix: logs/
+      
+  MyFunction1:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/
       Handler: myfunction.handler
       Runtime: python3.7
       Tracing: Active
-      Timeout: 60
+      Timeout: 5
       Environment:
         Variables:
           LOG_LEVEL: !Ref LogLevel
-          TABLE_NAME: !Ref MyTable
 
-  MyTable:
-    Type: AWS::Serverless::SimpleTable
-
-Outputs:
-  MyFunctionName:
-    Description: "Lambda Function Name"
-    Value: !Ref MyFunction
-  MyFunctionArn:
-    Description: "Lambda Function ARN"
-    Value: !GetAtt MyFunction.Arn
-  MyTableName:
-    Description: "Table Name"
-    Value: !Ref MyTable
-  MyTableArn:
-    Description: "Table ARN"
-    Value: !GetAtt MyTable.Arn
+  MyFunction1LogForwarding:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:us-east-1:277187709615:applications/json-logs-to-kinesis-firehose
+        SemanticVersion: 1.0.0
+      Parameters: 
+        # Name (not ARN) of the Kinesis Data Firehose Delivery Stream that JSON-formatted log events should be written to.
+        KinesisFirehoseDeliveryStream: !GetAtt LogPipeline.Outputs.DeliveryStreamName
+        # Name (not ARN) of the Lambda function whose JSON-formatted logs should be sent to the given Kinesis Data Firehose Delivery Stream.
+        LogGroupName: !Sub /aws/lambda/${MyFunction1}
+        # Log level for Lambda function logging, e.g., ERROR, INFO, DEBUG, etc
+        LogLevel: DEBUG # Uncomment to override default value  
+      
+  MyFunction2:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: myfunction.handler
+      Runtime: python3.7
+      Tracing: Active
+      Timeout: 5
+      Environment:
+        Variables:
+          LOG_LEVEL: !Ref LogLevel
+      
+  MyFunction2LogForwarding:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:us-east-1:277187709615:applications/json-logs-to-kinesis-firehose
+        SemanticVersion: 1.0.0
+      Parameters: 
+        # Name (not ARN) of the Kinesis Data Firehose Delivery Stream that JSON-formatted log events should be written to.
+        KinesisFirehoseDeliveryStream: !GetAtt LogPipeline.Outputs.DeliveryStreamName
+        LogGroupName: !Sub /aws/lambda/${MyFunction2}
+        # Log level for Lambda function logging, e.g., ERROR, INFO, DEBUG, etc
+        LogLevel: DEBUG # Uncomment to override default value  
